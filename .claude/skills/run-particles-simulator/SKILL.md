@@ -32,7 +32,15 @@ No build step needed to run/drive the app in dev mode. `npm run build` (runs `ts
 
 ## Run (agent path)
 
-1. Start the dev server in the background and wait for it to actually serve (don't fixed-`sleep`):
+**Keep the dev server running across the whole session** rather than starting/killing it around every check — restarting repeatedly is slower and not needed since the driver opens a fresh page/session each invocation anyway. Only start it if it isn't already up, and only kill it if it's actually misbehaving (stale build, port conflict) or the user asks.
+
+1. Check whether it's already serving before starting a new one:
+
+```bash
+curl -sf http://localhost:5173 >/dev/null && echo "already up" || echo "needs start"
+```
+
+If it needs starting, launch it in the background and wait for it to actually serve (don't fixed-`sleep`):
 
 ```bash
 npm run dev &
@@ -54,7 +62,7 @@ EOF
 
 Screenshots land in `.claude/skills/run-particles-simulator/screenshots/<name>.png`, with the most recent always also copied to `.claude/skills/run-particles-simulator/screenshots/latest.png`.
 
-3. Stop the server when done (find the PID listening on 5173 and kill it — on Windows: `netstat -ano | grep 5173` then `taskkill //F //PID <pid>`; on a real Unix shell: `pkill -f "vite"`).
+3. Leave the server running for the next check. If you do need to stop it (e.g. before a `git`-affecting operation, or because it's genuinely stuck): find the PID listening on 5173 and kill it — on Windows: `netstat -ano | grep 5173` then `taskkill //F //PID <pid>`; on a real Unix shell: `pkill -f "vite"`.
 
 Driver commands:
 
@@ -92,6 +100,7 @@ As of this writing there are no test files yet (`vitest` exits with code 1 and "
 
 ## Gotchas
 
+- **The panel now has multiple `.tp-txtv_i` / `.tp-sldv` elements (one pair per slider)** — a bare `click .tp-sldv` or `fill .tp-txtv_i` always hits the *first* match in DOM order (folder order top-to-bottom), which silently targets the wrong control as more sliders get added. Playwright's `>> nth=N` selector chaining works directly in any driver command's selector argument (0-indexed) — e.g. `fill .tp-txtv_i >> nth=1 0.005` to hit the second number field. No driver code changes needed; this is native Playwright selector syntax.
 - **`chromium-cli` isn't installed on this host** — that's why `driver.mjs` exists instead of the usual heredoc-to-`chromium-cli` pattern. If a future environment does have `chromium-cli` on PATH, prefer it and treat this driver as the fallback.
 - **The driver script must run from inside the repo, not a temp/scratch directory.** It's an ESM script that does `import { chromium } from 'playwright'`, resolved via `node_modules` — running it from a path without that `node_modules` in scope fails with `ERR_MODULE_NOT_FOUND`.
 - **Playwright's headless Chromium reports `navigator.gpu` as available but then fails adapter negotiation** in this environment specifically (`[warning] No available adapters.`) — `WebGPURenderer` correctly falls back to WebGL2 and logs `THREE.WebGPURenderer: WebGPU is not available, running under WebGL2 backend.`. This is expected in this sandboxed/software-rendered environment, not an app bug — the whole point of `renderer.init()`'s fallback path is to handle exactly this. Don't be alarmed if a screenshot's status line says `WebGL2 (fallback)`; a real user's browser on real GPU hardware is expected to say `WebGPU`.

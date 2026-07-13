@@ -16,6 +16,8 @@ export function createPanel(
   params: SimParams,
   monitors: PanelMonitors,
   onParticleCountChange: (count: number) => void,
+  onLiveParamsChange: (partial: Partial<SimParams>) => void,
+  onRestart: () => void,
 ): Pane {
   const pane = new Pane({ title: 'Particles Simulator' });
 
@@ -47,6 +49,15 @@ export function createPanel(
   const sim = pane.addFolder({ title: 'Simulation' });
   sim.addBinding(app, 'playing', { label: 'Playing' });
   sim.addBinding(app, 'timeScale', { label: 'Speed', min: 0, max: 3, step: 0.1 });
+  sim.addButton({ title: 'Restart' }).on('click', onRestart);
+
+  const gravity = pane.addFolder({ title: 'Gravity' });
+  gravity
+    .addBinding(params, 'gravityG', { label: 'G', min: 0, max: 0.01, step: 0.0001 })
+    .on('change', (ev) => onLiveParamsChange({ gravityG: ev.value }));
+  gravity
+    .addBinding(params, 'softening', { label: 'Softening', min: 0.01, max: 1, step: 0.01 })
+    .on('change', (ev) => onLiveParamsChange({ softening: ev.value }));
 
   const cloud = pane.addFolder({ title: 'Point Cloud' });
   cloud
@@ -54,11 +65,11 @@ export function createPanel(
       label: 'N',
       min: PARTICLE_COUNT_MIN,
       max: PARTICLE_COUNT_MAX,
-      step: 1_000,
+      step: 100,
     })
     .on('change', (ev) => {
-      // Only regenerate the (up to 1M-point) buffer once the drag settles,
-      // not on every intermediate tick.
+      // Only regenerate the buffer once the drag settles, not on every
+      // intermediate tick.
       if (ev.last) onParticleCountChange(ev.value);
     });
 

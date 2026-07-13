@@ -19,7 +19,11 @@
       "Bash(netstat -ano)",
       "Bash(npx tsc *)",
       "Bash(node .claude/skills/run-particles-simulator/driver.mjs)",
-      "Edit(/.claude/skills/run-particles-simulator/**)"
+      "Edit(/.claude/skills/run-particles-simulator/**)",
+      "Bash(curl -sf http://localhost:5173)"
+    ],
+    "additionalDirectories": [
+      "c:\\GoogleDrive\\dev\\ParticlesSimulator\\.claude\\skills\\run-particles-simulator\\screenshots"
     ]
   }
 }

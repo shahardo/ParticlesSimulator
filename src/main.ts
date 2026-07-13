@@ -21,12 +21,26 @@ const cloud = new CpuParticlePoints();
 cloud.setPositions(app.getSnapshot().positions);
 scene.add(cloud.object);
 
-const monitors: PanelMonitors = { fps: 0, cpuLoad: 0, gpuLoad: 0 };
-createPanel(app, params, monitors, (count) => {
-  params.particleCount = count;
-  backend.init(count, params);
+function reinit(): void {
+  backend.init(params.particleCount, params);
   cloud.setPositions(app.getSnapshot().positions);
-});
+}
+
+const monitors: PanelMonitors = { fps: 0, cpuLoad: 0, gpuLoad: 0 };
+createPanel(
+  app,
+  params,
+  monitors,
+  (count) => {
+    params.particleCount = count;
+    reinit();
+  },
+  (partial) => {
+    Object.assign(params, partial);
+    backend.setParams(partial);
+  },
+  reinit,
+);
 
 if (import.meta.env.DEV) {
   // Numeric inspection hook for the run-particles-simulator driver (see
