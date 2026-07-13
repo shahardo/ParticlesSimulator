@@ -65,7 +65,9 @@ Driver commands:
 | `wait-for text=<text>` | poll `document.body.innerText` until it contains `<text>` (30s timeout) |
 | `screenshot [name]` | save a PNG; also updates `screenshots/latest.png` |
 | `orbit-drag` | drag from canvas center to rotate the `OrbitControls` camera — the one interaction this app always has |
-| `click <selector>` | click an element |
+| `click <selector>` | click an element (default position: its center) |
+| `click-at <selector> <fraction>` | real click at a fractional x-position within an element's bounding box — e.g. `click-at .tp-sldv 0.5` to set a Tweakpane slider to its midpoint. Unreliable at extreme fractions (≈0.95+); prefer `fill` for exact/edge values |
+| `fill <selector> <value>` | fill an `<input>` and press Enter — e.g. Tweakpane's paired `.tp-txtv_i` number field next to a slider. More reliable than `click-at` for exact values |
 | `eval <js>` | evaluate JS in the page and print the (JSON-serializable) result |
 | `console` | print all captured console/page messages so far |
 | `console --errors` | print only `error`/`warning`/`pageerror` messages |
@@ -95,6 +97,8 @@ As of this writing there are no test files yet (`vitest` exits with code 1 and "
 - **Playwright's headless Chromium reports `navigator.gpu` as available but then fails adapter negotiation** in this environment specifically (`[warning] No available adapters.`) — `WebGPURenderer` correctly falls back to WebGL2 and logs `THREE.WebGPURenderer: WebGPU is not available, running under WebGL2 backend.`. This is expected in this sandboxed/software-rendered environment, not an app bug — the whole point of `renderer.init()`'s fallback path is to handle exactly this. Don't be alarmed if a screenshot's status line says `WebGL2 (fallback)`; a real user's browser on real GPU hardware is expected to say `WebGPU`.
 - **`GPU stall due to ReadPixels` driver-console warnings** show up after every `screenshot` command under the WebGL2 fallback path (screenshotting forces a readback). Harmless noise specific to the fallback path; filter with `console --errors` rather than `console` if it's cluttering output.
 - **Installing playwright's browsers is not `npm install`-scoped** — `npx playwright install chromium` downloads to a machine-wide cache (`%LOCALAPPDATA%\ms-playwright\`), not into `node_modules` or the repo. A fresh clone still needs this run once per machine, even though `node_modules/playwright` itself comes from `npm install`.
+- **Tweakpane sliders (`.tp-sldv`) silently ignore raw `page.mouse.down/move/up` drag sequences and scripted `dispatchEvent` calls** — no error, the value just doesn't change. A real Playwright `click`/`click-at` (trusted synthetic input) works. `click-at` also becomes unreliable at extreme fractions (observed failing intermittently above ≈0.95, and the failure isn't even consistent run-to-run at the same fraction) — use `fill` on the paired `.tp-txtv_i` number input instead when you need an exact or extreme value (e.g. testing N at exactly 1,000,000).
+- **`@types/three` doesn't type `renderer.backend.isWebGPUBackend`** (only declares the base `Backend` class, not the concrete `WebGPUBackend` subclass that has this discriminator at runtime) — see the narrow-cast workaround in `src/utils/backend.ts`. Also, `tweakpane`'s published `.d.ts` files import from `@tweakpane/core`, which isn't pulled in automatically — install it explicitly as a devDependency (`npm install -D @tweakpane/core`) or `tsc` fails with "Property 'addFolder'/'addBinding' does not exist on type 'Pane'" even though it works fine at runtime.
 
 ## Troubleshooting
 

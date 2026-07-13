@@ -16,7 +16,10 @@
       "Bash(npx playwright *)",
       "Bash(npm run *)",
       "Bash(timeout 30 bash -c 'until curl -sf http://localhost:5173 >/dev/null; do sleep 1; done')",
-      "Bash(netstat -ano)"
+      "Bash(netstat -ano)",
+      "Bash(npx tsc *)",
+      "Bash(node .claude/skills/run-particles-simulator/driver.mjs)",
+      "Edit(/.claude/skills/run-particles-simulator/**)"
     ]
   }
 }

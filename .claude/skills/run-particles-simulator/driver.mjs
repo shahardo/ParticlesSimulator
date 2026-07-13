@@ -12,6 +12,11 @@
 //   screenshot [name]      save PNG under screenshots/<name|timestamp>.png + screenshots/latest.png
 //   orbit-drag             drag from canvas center to rotate the OrbitControls camera
 //   click <selector>       click an element
+//   click-at <selector> <fraction>   real click at fractional x-position within an
+//                          element's bounding box (e.g. to set a Tweakpane slider)
+//   fill <selector> <value>   fill an <input> and press Enter (e.g. Tweakpane's
+//                          paired number text field -- more reliable than
+//                          click-at for exact/extreme values)
 //   eval <js>              evaluate JS in page context, print the result
 //   console                print all captured console/page messages so far
 //   console --errors       print only console errors/warnings + pageerrors
@@ -92,6 +97,38 @@ for await (const raw of rl) {
         await page.mouse.up();
         await page.waitForTimeout(300);
         console.log('[orbit-drag] done');
+        break;
+      }
+      case 'click-at': {
+        // rest = "<css-selector> <fraction 0..1>" -- a real (trusted,
+        // Playwright-native) click at that fractional x position within the
+        // matched element's bounding box. This is how to set a Tweakpane
+        // slider (e.g. `.tp-sldv`) to a specific value: Tweakpane recomputes
+        // the value from the absolute click position, but only reacts to
+        // genuine trusted input (raw `page.mouse` drag sequences and
+        // scripted `dispatchEvent` calls were both silently ignored).
+        const idx = rest.lastIndexOf(' ');
+        const selector = rest.slice(0, idx);
+        const frac = Number(rest.slice(idx + 1));
+        const el = await page.$(selector);
+        if (!el) throw new Error(`selector not found: ${selector}`);
+        const box = await el.boundingBox();
+        const x = Math.max(1, Math.min(box.width - 1, box.width * frac));
+        await el.click({ position: { x, y: box.height / 2 } });
+        console.log(`[click-at] ${selector} -> ${frac}`);
+        break;
+      }
+      case 'fill': {
+        // rest = "<css-selector> <value>" -- fills a real <input> (e.g.
+        // Tweakpane's paired `.tp-txtv_i` number field next to a slider) and
+        // presses Enter. More reliable than clicking at an exact slider
+        // fraction, especially near the extreme ends of the range.
+        const idx = rest.lastIndexOf(' ');
+        const selector = rest.slice(0, idx);
+        const value = rest.slice(idx + 1);
+        await page.fill(selector, value);
+        await page.press(selector, 'Enter');
+        console.log(`[fill] ${selector} = ${value}`);
         break;
       }
       case 'click': {
