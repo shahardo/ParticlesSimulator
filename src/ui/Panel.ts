@@ -4,6 +4,11 @@ import type { App } from '../app/App.ts';
 
 export interface PanelMonitors {
   fps: number;
+  /** % of each frame the JS thread was busy (sim step + draw-call submission). */
+  cpuLoad: number;
+  /** 100 - cpuLoad: a proxy for GPU-bound time, not a true hardware reading
+   * (browsers don't expose real GPU utilization to JS). */
+  gpuLoad: number;
 }
 
 export function createPanel(
@@ -20,6 +25,22 @@ export function createPanel(
     view: 'graph',
     min: 0,
     max: 120,
+    interval: 200,
+  });
+  perf.addBinding(monitors, 'cpuLoad', {
+    label: 'CPU %',
+    readonly: true,
+    view: 'graph',
+    min: 0,
+    max: 100,
+    interval: 200,
+  });
+  perf.addBinding(monitors, 'gpuLoad', {
+    label: 'GPU % (est.)',
+    readonly: true,
+    view: 'graph',
+    min: 0,
+    max: 100,
     interval: 200,
   });
 

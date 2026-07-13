@@ -21,7 +21,7 @@ const cloud = new CpuParticlePoints();
 cloud.setPositions(app.getSnapshot().positions);
 scene.add(cloud.object);
 
-const monitors: PanelMonitors = { fps: 0 };
+const monitors: PanelMonitors = { fps: 0, cpuLoad: 0, gpuLoad: 0 };
 createPanel(app, params, monitors, (count) => {
   params.particleCount = count;
   backend.init(count, params);
@@ -32,7 +32,7 @@ if (import.meta.env.DEV) {
   // Numeric inspection hook for the run-particles-simulator driver (see
   // .claude/skills/run-particles-simulator/SKILL.md) -- lets `eval` read
   // live simulation state without scraping the rendered scene.
-  (window as unknown as { __debug: unknown }).__debug = { app, backend, params };
+  (window as unknown as { __debug: unknown }).__debug = { app, backend, params, monitors };
 }
 
 async function boot() {
@@ -49,23 +49,39 @@ async function boot() {
   let lastTime = performance.now();
   let frameCount = 0;
   let fpsAccMs = 0;
+  // "CPU load" = share of each frame the JS thread was actually busy (sim
+  // step + draw-call submission). Browsers don't expose real GPU hardware
+  // utilization to JS, so "GPU load" here is just the rest of the frame --
+  // a proxy that's meaningful because requestAnimationFrame pacing reflects
+  // vsync/GPU-completion waits, not a true per-API utilization reading.
+  let cpuBusyAccMs = 0;
 
   renderer.setAnimationLoop((time) => {
     const dtMs = time - lastTime;
     lastTime = time;
     frameCount++;
     fpsAccMs += dtMs;
-    if (fpsAccMs >= 500) {
-      monitors.fps = Math.round((frameCount * 1000) / fpsAccMs);
-      frameCount = 0;
-      fpsAccMs = 0;
-    }
 
+    const stepStart = performance.now();
     app.tick(dtMs / 1000);
     cloud.markDirty();
+    const stepEnd = performance.now();
 
     controls.update();
     renderer.render(scene, camera);
+    const renderEnd = performance.now();
+
+    cpuBusyAccMs += (stepEnd - stepStart) + (renderEnd - stepEnd);
+
+    if (fpsAccMs >= 500) {
+      monitors.fps = Math.round((frameCount * 1000) / fpsAccMs);
+      const cpuPct = Math.min(100, (cpuBusyAccMs / fpsAccMs) * 100);
+      monitors.cpuLoad = Math.round(cpuPct);
+      monitors.gpuLoad = Math.round(100 - cpuPct);
+      frameCount = 0;
+      fpsAccMs = 0;
+      cpuBusyAccMs = 0;
+    }
   });
 }
 
