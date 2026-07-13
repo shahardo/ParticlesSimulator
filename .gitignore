@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+.vscode/*
+!.vscode/extensions.json
+
+*.log
+
+.claude/skills/run-particles-simulator/screenshots/*
+!.claude/skills/run-particles-simulator/screenshots/.gitkeep

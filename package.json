@@ -1,0 +1,22 @@
+{
+  "name": "particles-simulator",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "three": "0.185.1",
+    "tweakpane": "^4.0.5"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  }
+}

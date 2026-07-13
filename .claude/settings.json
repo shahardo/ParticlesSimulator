@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npm view *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(node -e \"const p = require\\('./node_modules/three/package.json'\\); console.log\\(JSON.stringify\\(p.exports, null, 2\\)\\)\")",
+      "Bash(npx vite *)",
+      "Bash(curl -s http://localhost:5173/)",
+      "Bash(curl -s http://localhost:5173/src/main.ts)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(chromium-cli --help)",
+      "Bash(npm install *)",
+      "Bash(timeout 20 npx vitest run)",
+      "Bash(npx playwright *)",
+      "Bash(npm run *)",
+      "Bash(timeout 30 bash -c 'until curl -sf http://localhost:5173 >/dev/null; do sleep 1; done')",
+      "Bash(netstat -ano)"
+    ]
+  }
+}
