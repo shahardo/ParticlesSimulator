@@ -18,9 +18,11 @@
       "Bash(timeout 30 bash -c 'until curl -sf http://localhost:5173 >/dev/null; do sleep 1; done')",
       "Bash(netstat -ano)",
       "Bash(npx tsc *)",
-      "Bash(node .claude/skills/run-particles-simulator/driver.mjs)",
+      "Bash(node .claude/skills/run-particles-simulator/driver.mjs *)",
       "Edit(/.claude/skills/run-particles-simulator/**)",
-      "Bash(curl -sf http://localhost:5173)"
+      "Bash(curl -sf http://localhost:5173)",
+      "Bash(rm -f \"c:/GoogleDrive/dev/ParticlesSimulator/.claude/skills/run-particles-simulator/screenshots/m3-restart-before.png\" \"c:/GoogleDrive/dev/ParticlesSimulator/.claude/skills/run-particles-simulator/screenshots/m3-restart-after.png\")",
+      "Bash(npx vitest *)"
     ],
     "additionalDirectories": [
       "c:\\GoogleDrive\\dev\\ParticlesSimulator\\.claude\\skills\\run-particles-simulator\\screenshots"

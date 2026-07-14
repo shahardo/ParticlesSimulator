@@ -9,9 +9,12 @@ import { CpuBackend } from './sim/cpu/CpuBackend.ts';
 const appEl = document.querySelector<HTMLDivElement>('#app')!;
 const statusEl = document.querySelector<HTMLDivElement>('#boot-status')!;
 
-const { renderer, scene, camera, controls } = createSceneRig(appEl);
-
 const params = { ...defaultParams };
+
+const { renderer, scene, camera, controls, setDomainRadius } = createSceneRig(
+  appEl,
+  params.domainRadius,
+);
 
 const backend = new CpuBackend();
 backend.init(params.particleCount, params);
@@ -38,6 +41,7 @@ createPanel(
   (partial) => {
     Object.assign(params, partial);
     backend.setParams(partial);
+    if (partial.domainRadius !== undefined) setDomainRadius(partial.domainRadius);
   },
   reinit,
 );

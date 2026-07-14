@@ -1,5 +1,11 @@
 import { Pane } from 'tweakpane';
-import { PARTICLE_COUNT_MAX, PARTICLE_COUNT_MIN, type SimParams } from '../app/Config.ts';
+import {
+  DOMAIN_RADIUS_MAX,
+  DOMAIN_RADIUS_MIN,
+  PARTICLE_COUNT_MAX,
+  PARTICLE_COUNT_MIN,
+  type SimParams,
+} from '../app/Config.ts';
 import type { App } from '../app/App.ts';
 
 export interface PanelMonitors {
@@ -72,6 +78,14 @@ export function createPanel(
       // intermediate tick.
       if (ev.last) onParticleCountChange(ev.value);
     });
+  cloud
+    .addBinding(params, 'domainRadius', {
+      label: 'Box Radius',
+      min: DOMAIN_RADIUS_MIN,
+      max: DOMAIN_RADIUS_MAX,
+      step: 0.5,
+    })
+    .on('change', (ev) => onLiveParamsChange({ domainRadius: ev.value }));
 
   return pane;
 }

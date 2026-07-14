@@ -7,9 +7,13 @@ export interface SceneRig {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   resize: () => void;
+  /** Resizes the visual grid/boundary helper to match a new domain radius.
+   * Does not move the camera -- a live slider tweak shouldn't yank the
+   * user's current view around. */
+  setDomainRadius: (radius: number) => void;
 }
 
-export function createSceneRig(container: HTMLElement): SceneRig {
+export function createSceneRig(container: HTMLElement, initialDomainRadius: number): SceneRig {
   const renderer = new THREE.WebGPURenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -24,14 +28,23 @@ export function createSceneRig(container: HTMLElement): SceneRig {
     0.01,
     1000,
   );
-  camera.position.set(4, 3, 6);
+  // Same viewing angle regardless of domain size -- just pulled back
+  // proportionally so the whole domain is comfortably framed at boot.
+  camera.position.set(4, 3, 6).normalize().multiplyScalar(initialDomainRadius * 2.6);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
 
-  const grid = new THREE.GridHelper(10, 10, 0x2a2a2a, 0x1a1a1a);
-  scene.add(grid);
+  let grid = new THREE.GridHelper(1, 1, 0x2a2a2a, 0x1a1a1a);
+  const setDomainRadius = (radius: number) => {
+    scene.remove(grid);
+    grid.dispose();
+    grid = new THREE.GridHelper(radius * 2, 10, 0x2a2a2a, 0x1a1a1a);
+    scene.add(grid);
+  };
+  setDomainRadius(initialDomainRadius);
+
   const axes = new THREE.AxesHelper(1.5);
   scene.add(axes);
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -46,5 +59,5 @@ export function createSceneRig(container: HTMLElement): SceneRig {
   };
   window.addEventListener('resize', resize);
 
-  return { renderer, scene, camera, controls, resize };
+  return { renderer, scene, camera, controls, resize, setDomainRadius };
 }
