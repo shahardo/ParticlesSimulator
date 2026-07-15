@@ -24,6 +24,11 @@ export function createPanel(
   onParticleCountChange: (count: number) => void,
   onLiveParamsChange: (partial: Partial<SimParams>) => void,
   onRestart: () => void,
+  /** Returns the *actual* resulting state -- main.ts falls back to CPU
+   * silently if GPU was requested but unavailable, and the checkbox needs
+   * to reflect that rather than keep showing "checked" for a backend
+   * that isn't really active. */
+  onBackendChange: (useGpu: boolean) => boolean,
 ): Pane {
   const pane = new Pane({ title: 'Particles Simulator' });
 
@@ -56,6 +61,19 @@ export function createPanel(
   sim.addBinding(app, 'playing', { label: 'Playing' });
   sim.addBinding(app, 'timeScale', { label: 'Speed', min: 0, max: 3, step: 0.1 });
   sim.addButton({ title: 'Restart' }).on('click', onRestart);
+
+  // M5 skeleton: a plain manual toggle, not yet disabled when no real WebGPU
+  // adapter is available (silently falls back to CPU instead -- see
+  // main.ts). Full "adaptive default N + gray out when unavailable" UX is M7.
+  const backendState = { useGpu: false };
+  const gpuBinding = sim.addBinding(backendState, 'useGpu', { label: 'Use GPU' });
+  gpuBinding.on('change', (ev) => {
+    const actual = onBackendChange(ev.value);
+    if (actual !== ev.value) {
+      backendState.useGpu = actual;
+      gpuBinding.refresh();
+    }
+  });
 
   const gravity = pane.addFolder({ title: 'Gravity' });
   gravity

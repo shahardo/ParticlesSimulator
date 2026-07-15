@@ -18,11 +18,16 @@
       "Bash(timeout 30 bash -c 'until curl -sf http://localhost:5173 >/dev/null; do sleep 1; done')",
       "Bash(netstat -ano)",
       "Bash(npx tsc *)",
-      "Bash(node .claude/skills/run-particles-simulator/driver.mjs *)",
+      "Bash(node .claude/skills/run-particles-simulator/driver.mjs)",
       "Edit(/.claude/skills/run-particles-simulator/**)",
       "Bash(curl -sf http://localhost:5173)",
       "Bash(rm -f \"c:/GoogleDrive/dev/ParticlesSimulator/.claude/skills/run-particles-simulator/screenshots/m3-restart-before.png\" \"c:/GoogleDrive/dev/ParticlesSimulator/.claude/skills/run-particles-simulator/screenshots/m3-restart-after.png\")",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Bash(node .claude/skills/run-particles-simulator/driver.mjs \"C:\\\\Users\\\\shahar\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--GoogleDrive-dev-ParticlesSimulator\\\\51311744-8d13-4bd3-8660-1224145e9cd7\\\\scratchpad\\\\brute-drift-test.txt\")",
+      "Bash(echo *)",
+      "Read(//tmp/**)",
+      "Bash(./node_modules/.bin/vitest.cmd run *)",
+      "Bash(curl *)"
     ],
     "additionalDirectories": [
       "c:\\GoogleDrive\\dev\\ParticlesSimulator\\.claude\\skills\\run-particles-simulator\\screenshots"

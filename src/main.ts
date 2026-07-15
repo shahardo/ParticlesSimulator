@@ -1,10 +1,12 @@
 import { createSceneRig } from './render/scene.ts';
 import { CpuParticlePoints } from './render/cpu/CpuParticlePoints.ts';
+import { GpuParticlePoints } from './render/gpu/GpuParticlePoints.ts';
 import { createPanel, type PanelMonitors } from './ui/Panel.ts';
 import { defaultParams } from './app/Config.ts';
 import { isRealWebGPUBackend } from './utils/backend.ts';
 import { App } from './app/App.ts';
 import { CpuBackend } from './sim/cpu/CpuBackend.ts';
+import { GpuBackend } from './sim/gpu/GpuBackend.ts';
 
 const appEl = document.querySelector<HTMLDivElement>('#app')!;
 const statusEl = document.querySelector<HTMLDivElement>('#boot-status')!;
@@ -16,18 +18,44 @@ const { renderer, scene, camera, controls, setDomainRadius } = createSceneRig(
   params.domainRadius,
 );
 
-const backend = new CpuBackend();
-backend.init(params.particleCount, params);
-const app = new App(backend);
+// Only known for certain after renderer.init() resolves (in boot(), below).
+// Until then, requesting GPU mode is safely ignored by rebuild()'s check.
+let gpuAvailable = false;
+let useGpu = false;
 
-const cloud = new CpuParticlePoints();
-cloud.setPositions(app.getSnapshot().positions);
-scene.add(cloud.object);
+const cpuBackendSingleton = new CpuBackend();
+const app = new App(cpuBackendSingleton);
 
-function reinit(): void {
-  backend.init(params.particleCount, params);
-  cloud.setPositions(app.getSnapshot().positions);
+let currentCloud: CpuParticlePoints | GpuParticlePoints | undefined;
+
+function rebuild(): void {
+  if (useGpu && !gpuAvailable) {
+    console.warn('GPU backend requested but no real WebGPU adapter is available; staying on CPU.');
+    useGpu = false;
+  }
+
+  if (currentCloud) {
+    scene.remove(currentCloud.object);
+    currentCloud.dispose();
+  }
+
+  if (useGpu) {
+    const gpuBackend = new GpuBackend(renderer);
+    gpuBackend.init(params.particleCount, params);
+    app.setBackend(gpuBackend);
+    currentCloud = new GpuParticlePoints(gpuBackend.getPositionsNode(), params.particleCount);
+  } else {
+    cpuBackendSingleton.init(params.particleCount, params);
+    app.setBackend(cpuBackendSingleton);
+    const cpuPoints = new CpuParticlePoints();
+    cpuPoints.setPositions(app.getSnapshot().positions);
+    currentCloud = cpuPoints;
+  }
+
+  scene.add(currentCloud.object);
 }
+
+rebuild();
 
 const monitors: PanelMonitors = { fps: 0, cpuLoad: 0, gpuLoad: 0 };
 createPanel(
@@ -36,21 +64,32 @@ createPanel(
   monitors,
   (count) => {
     params.particleCount = count;
-    reinit();
+    rebuild();
   },
   (partial) => {
     Object.assign(params, partial);
-    backend.setParams(partial);
+    // Forwards to whichever backend is currently active (App keeps that
+    // reference, not main.ts). GpuBackend.setParams() only understands
+    // domainRadius so far -- no gravity exists on the GPU path until M6 --
+    // and harmlessly ignores the rest.
+    app.setParams(partial);
     if (partial.domainRadius !== undefined) setDomainRadius(partial.domainRadius);
   },
-  reinit,
+  rebuild,
+  (nextUseGpu) => {
+    useGpu = nextUseGpu;
+    rebuild();
+    // rebuild() may have silently reverted useGpu to false (no real WebGPU
+    // adapter) -- report the actual result so the checkbox can correct itself.
+    return useGpu;
+  },
 );
 
 if (import.meta.env.DEV) {
   // Numeric inspection hook for the run-particles-simulator driver (see
   // .claude/skills/run-particles-simulator/SKILL.md) -- lets `eval` read
   // live simulation state without scraping the rendered scene.
-  (window as unknown as { __debug: unknown }).__debug = { app, backend, params, monitors };
+  (window as unknown as { __debug: unknown }).__debug = { app, params, monitors };
 }
 
 async function boot() {
@@ -59,9 +98,10 @@ async function boot() {
   // shaders/atomics (needed by the GPU physics backend from M5 onward) only
   // exist on the real WebGPU path, so we surface which one we landed on.
   await renderer.init();
+  gpuAvailable = isRealWebGPUBackend(renderer);
 
   const hasWebGPU = 'gpu' in navigator && navigator.gpu !== undefined;
-  const backendName = isRealWebGPUBackend(renderer) ? 'WebGPU' : 'WebGL2 (fallback)';
+  const backendName = gpuAvailable ? 'WebGPU' : 'WebGL2 (fallback)';
   statusEl.textContent = `renderer: ${backendName} · navigator.gpu: ${hasWebGPU ? 'available' : 'unavailable'}`;
 
   let lastTime = performance.now();
@@ -82,7 +122,7 @@ async function boot() {
 
     const stepStart = performance.now();
     app.tick(dtMs / 1000);
-    cloud.markDirty();
+    if (currentCloud instanceof CpuParticlePoints) currentCloud.markDirty();
     const stepEnd = performance.now();
 
     controls.update();

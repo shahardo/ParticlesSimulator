@@ -8,6 +8,7 @@ import { computeGridSizing, UniformGrid } from './grid/UniformGrid.ts';
  * (rebuilt every step), replacing M3's O(N^2) brute force so N can scale
  * into the tens of thousands. Particles still start from rest. */
 export class CpuBackend implements SimulationBackend {
+  readonly kind = 'cpu' as const;
   private count = 0;
   private domainRadius = 1;
   private gravityG = 0;
