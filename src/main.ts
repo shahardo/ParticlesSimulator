@@ -7,6 +7,13 @@ import { isRealWebGPUBackend } from './utils/backend.ts';
 import { App } from './app/App.ts';
 import { CpuBackend } from './sim/cpu/CpuBackend.ts';
 import { GpuBackend } from './sim/gpu/GpuBackend.ts';
+import {
+  verifyGpuGravity,
+  verifyGpuGrid,
+  verifyGpuGravityStages,
+  verifyGpuGravityTerms,
+  dumpGravityComparison,
+} from './debug/verifyGpuGravity.ts';
 
 const appEl = document.querySelector<HTMLDivElement>('#app')!;
 const statusEl = document.querySelector<HTMLDivElement>('#boot-status')!;
@@ -87,7 +94,54 @@ if (import.meta.env.DEV) {
   // Numeric inspection hook for the run-particles-simulator driver (see
   // .claude/skills/run-particles-simulator/SKILL.md) -- lets `eval` read
   // live simulation state without scraping the rendered scene.
-  (window as unknown as { __debug: unknown }).__debug = { app, params, monitors };
+  (window as unknown as { __debug: unknown }).__debug = {
+    app,
+    params,
+    monitors,
+    // Bypasses PARTICLE_COUNT_MAX (the Tweakpane slider's cap, not enforced
+    // anywhere below the UI) -- lets a debug script test the GPU path at
+    // this milestone's actual target scale (N=100k-250k) without waiting
+    // for M7's adaptive-N/re-clamping work. Returns what actually happened
+    // (rebuild() silently falls back to CPU if GPU was requested but no
+    // real adapter is available, same as the panel's own toggle).
+    debugRebuild: (count: number, gpu: boolean) => {
+      useGpu = gpu;
+      params.particleCount = count;
+      rebuild();
+      return { kind: app.getBackend().kind, count: params.particleCount };
+    },
+    // Cross-backend gravity parity check -- see verifyGpuGravity's doc
+    // comment for why this is a harder/different test than the RMS-radius
+    // trace used so far. Returns a rejected promise (not a thrown
+    // exception) if there's no real WebGPU adapter, since GpuBackend can't
+    // run at all in that case.
+    verifyGpuGravity: (count?: number) => {
+      if (!gpuAvailable) return Promise.reject(new Error('no real WebGPU adapter available'));
+      return verifyGpuGravity(renderer, params, count);
+    },
+    // Bisects a verifyGpuGravity failure: diffs the GPU-built grid's
+    // buffers against a CPU-built grid for the same positions, isolating
+    // "grid build is wrong" from "grid is fine, gravityKernel misuses it".
+    verifyGpuGrid: (count?: number) => {
+      if (!gpuAvailable) return Promise.reject(new Error('no real WebGPU adapter available'));
+      return verifyGpuGrid(renderer, params, count);
+    },
+    // Bisects the other way: is it gravityKernel (near+far-field sum) or
+    // the momentum-correction kernels that diverge from the CPU reference?
+    verifyGpuGravityStages: (count?: number) => {
+      if (!gpuAvailable) return Promise.reject(new Error('no real WebGPU adapter available'));
+      return verifyGpuGravityStages(renderer, params, count);
+    },
+    // Bisects the near-field sum from the far-field sum independently.
+    verifyGpuGravityTerms: (count?: number) => {
+      if (!gpuAvailable) return Promise.reject(new Error('no real WebGPU adapter available'));
+      return verifyGpuGravityTerms(renderer, params, count);
+    },
+    dumpGravityComparison: (count?: number) => {
+      if (!gpuAvailable) return Promise.reject(new Error('no real WebGPU adapter available'));
+      return dumpGravityComparison(renderer, params, count);
+    },
+  };
 }
 
 async function boot() {

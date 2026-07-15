@@ -27,6 +27,10 @@ export function createGravityKernel(
   count: number,
   G: any,
   softening: any,
+  // Debug-only switches for bisecting a verifyGpuGravity mismatch down to
+  // near-field vs far-field (see src/debug/verifyGpuGravity.ts) -- both
+  // default true for the real production kernel.
+  { includeNear = true, includeFar = true }: { includeNear?: boolean; includeFar?: boolean } = {},
 ): any {
   const { fineCellsPerAxis, coarseCellsPerAxis, blockSize, coarseCellCount } = grid;
 
@@ -43,36 +47,38 @@ export function createGravityKernel(
 
     // Near-field: direct particle-particle over the 3x3x3 fine-cell
     // neighborhood, unrolled in JS (the offsets are compile-time constants).
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx: any = fx.add(dx);
-          const ny: any = fy.add(dy);
-          const nz: any = fz.add(dz);
-          const inBounds: any = nx
-            .greaterThanEqual(int(0))
-            .and(nx.lessThan(fineCellsPerAxis))
-            .and(ny.greaterThanEqual(int(0)))
-            .and(ny.lessThan(fineCellsPerAxis))
-            .and(nz.greaterThanEqual(int(0)))
-            .and(nz.lessThan(fineCellsPerAxis));
+    if (includeNear) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx: any = fx.add(dx);
+            const ny: any = fy.add(dy);
+            const nz: any = fz.add(dz);
+            const inBounds: any = nx
+              .greaterThanEqual(int(0))
+              .and(nx.lessThan(fineCellsPerAxis))
+              .and(ny.greaterThanEqual(int(0)))
+              .and(ny.lessThan(fineCellsPerAxis))
+              .and(nz.greaterThanEqual(int(0)))
+              .and(nz.lessThan(fineCellsPerAxis));
 
-          If(inBounds, () => {
-            const neighborCell: any = nz.mul(fineCellsPerAxis).add(ny).mul(fineCellsPerAxis).add(nx);
-            const start: any = grid.fineCellStart.element(neighborCell);
-            const end: any = grid.fineCellStart.element(neighborCell.add(int(1)));
+            If(inBounds, () => {
+              const neighborCell: any = nz.mul(fineCellsPerAxis).add(ny).mul(fineCellsPerAxis).add(nx);
+              const start: any = grid.fineCellStart.element(neighborCell);
+              const end: any = grid.fineCellStart.element(neighborCell.add(int(1)));
 
-            Loop({ start, end }, ({ i: k }: any) => {
-              const j: any = grid.sortedIndices.element(k);
-              If(j.notEqual(selfIndex), () => {
-                const d: any = positions.element(j).sub(pos);
-                const distSq: any = dot(d, d).add(eps2);
-                const invDist3: any = distSq.mul(sqrt(distSq)).reciprocal();
-                const g: any = G.mul(invDist3); // mass_j = 1
-                accel.addAssign(d.mul(g));
+              Loop({ start, end }, ({ i: k }: any) => {
+                const j: any = grid.sortedIndices.element(k);
+                If(j.notEqual(selfIndex), () => {
+                  const d: any = positions.element(j).sub(pos);
+                  const distSq: any = dot(d, d).add(eps2);
+                  const invDist3: any = distSq.mul(sqrt(distSq)).reciprocal();
+                  const g: any = G.mul(invDist3); // mass_j = 1
+                  accel.addAssign(d.mul(g));
+                });
               });
             });
-          });
+          }
         }
       }
     }
@@ -81,23 +87,25 @@ export function createGravityKernel(
     // particle's exact position (not its cell's center of mass) -- see the
     // CPU version's long comment for why, and GpuBackend's momentum
     // correction for how the resulting non-conservation is fixed globally.
-    const cfx: any = fx.div(blockSize);
-    const cfy: any = fy.div(blockSize);
-    const cfz: any = fz.div(blockSize);
-    const ownCoarseIdx: any = cfz.mul(coarseCellsPerAxis).add(cfy).mul(coarseCellsPerAxis).add(cfx);
+    if (includeFar) {
+      const cfx: any = fx.div(blockSize);
+      const cfy: any = fy.div(blockSize);
+      const cfz: any = fz.div(blockSize);
+      const ownCoarseIdx: any = cfz.mul(coarseCellsPerAxis).add(cfy).mul(coarseCellsPerAxis).add(cfx);
 
-    Loop({ start: 0, end: coarseCellCount }, ({ i: c }: any) => {
-      If(c.notEqual(ownCoarseIdx), () => {
-        const m: any = grid.coarseCellMass.element(c);
-        If(m.greaterThan(float(0)), () => {
-          const d: any = grid.coarseCellCom.element(c).sub(pos);
-          const distSq: any = dot(d, d).add(eps2);
-          const invDist3: any = distSq.mul(sqrt(distSq)).reciprocal();
-          const g: any = m.mul(G).mul(invDist3);
-          accel.addAssign(d.mul(g));
+      Loop({ start: 0, end: coarseCellCount }, ({ i: c }: any) => {
+        If(c.notEqual(ownCoarseIdx), () => {
+          const m: any = grid.coarseCellMass.element(c);
+          If(m.greaterThan(float(0)), () => {
+            const d: any = grid.coarseCellCom.element(c).sub(pos);
+            const distSq: any = dot(d, d).add(eps2);
+            const invDist3: any = distSq.mul(sqrt(distSq)).reciprocal();
+            const g: any = m.mul(G).mul(invDist3);
+            accel.addAssign(d.mul(g));
+          });
         });
       });
-    });
+    }
 
     accelerations.element(instanceIndex).assign(accel);
   })().compute(count);

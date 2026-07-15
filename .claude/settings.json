@@ -28,7 +28,9 @@
       "Read(//tmp/**)",
       "Bash(./node_modules/.bin/vitest.cmd run *)",
       "Bash(curl *)",
-      "Bash(HEADED=1 node .claude/skills/run-particles-simulator/driver.mjs)"
+      "Bash(HEADED=1 node .claude/skills/run-particles-simulator/driver.mjs)",
+      "Bash(./node_modules/.bin/tsc.cmd -b --force)",
+      "Bash(echo \"tsc exit:$?\")"
     ],
     "additionalDirectories": [
       "c:\\GoogleDrive\\dev\\ParticlesSimulator\\.claude\\skills\\run-particles-simulator\\screenshots",

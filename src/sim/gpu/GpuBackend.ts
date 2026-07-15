@@ -5,6 +5,15 @@ import type { SimParams } from '../../app/Config.ts';
 import { computeGridSizing } from '../cpu/grid/UniformGrid.ts';
 import { GpuUniformGrid } from './grid/GpuUniformGrid.ts';
 import { createGravityKernel } from './physics/gpuGravity.ts';
+import { unpadVec3 } from '../../debug/vec3Buffer.ts';
+
+/** Debug-only: which terms `debugComputeAccelerationsRaw` should include,
+ * for bisecting a `verifyGpuGravity` mismatch down to near-field vs
+ * far-field (see `src/debug/verifyGpuGravity.ts`). */
+export interface GravityDebugMode {
+  includeNear?: boolean;
+  includeFar?: boolean;
+}
 
 /**
  * M6: real softened-Newtonian gravity on the GPU, via `GpuUniformGrid` (a
@@ -23,11 +32,13 @@ import { createGravityKernel } from './physics/gpuGravity.ts';
  * have no WebGL2 equivalent) -- construct this only when
  * isRealWebGPUBackend(renderer) is true; there is no software fallback.
  *
- * Unverified on real GPU hardware, same as M5's skeleton (see
- * docs/devplan.md's M5/M6 as-built notes) -- this dev environment has no
- * real WebGPU adapter, so everything here is type-checked and pattern-
- * matched against confirmed TSL API usage (atomics, dynamic-bound `Loop`),
- * not run.
+ * Verified on real GPU hardware (a headed, non-headless browser session on
+ * this same machine gets a real WebGPU adapter -- see
+ * .claude/skills/run-particles-simulator/SKILL.md's `HEADED=1` note):
+ * `gravityKernel`'s output matches `computeGridGravity`'s CPU reference to
+ * float32 precision (see `src/debug/verifyGpuGravity.ts` and docs/devplan.md's
+ * M6 as-built notes for the full story, including a real bug that check
+ * found in the debug readback path itself, not the kernels).
  */
 export class GpuBackend implements SimulationBackend {
   readonly kind = 'gpu' as const;
@@ -214,13 +225,105 @@ export class GpuBackend implements SimulationBackend {
     return this.count;
   }
 
+  /** The GPU-resident grid (for reading back individual grid buffers during
+   * manual/test verification -- see `src/debug/verifyGpuGravity.ts`). */
+  get debugGrid(): GpuUniformGrid {
+    return this.grid;
+  }
+
+  /** Reads a `vec3` storage buffer back as a tightly-packed (stride-3)
+   * array, undoing the GPU's stride-4 padding -- see `debug/vec3Buffer.ts`.
+   * `itemSize` is only 4 once the buffer has actually been used in a
+   * dispatch, so this checks it rather than assuming either layout. */
+  private async readVec3Buffer(node: any): Promise<Float32Array> {
+    const attribute = node.value as THREE.BufferAttribute & { itemSize: number };
+    const buffer = await this.renderer.getArrayBufferAsync(attribute);
+    const raw = new Float32Array(buffer);
+    return attribute.itemSize === 4 ? unpadVec3(raw, this.count) : raw;
+  }
+
+  /** Writes a tightly-packed (stride-3) array into a `vec3` storage
+   * buffer's backing array -- always tightly packed, *not* pre-padded to
+   * stride-4, even though `.array` itself has usually already been
+   * upgraded to the padded layout by the time this runs (see
+   * `debug/vec3Buffer.ts`). That's not a bug: three's own attribute-update
+   * path (`WebGPUAttributeUtils.updateAttribute`, run on the next
+   * compute()/render() that references this buffer) always re-derives the
+   * padded layout itself by re-chopping `.array` at the *original*
+   * (cached, tightly-packed) item size, regardless of what `.array`
+   * currently holds. Pre-padding here before that runs feeds it
+   * already-padded data as if it were still tightly packed, corrupting it
+   * a second time -- confirmed directly by dumping the raw buffer through
+   * that exact write-then-compute sequence while chasing down a
+   * `verifyGpuGravity` mismatch that turned out to be this, not a real
+   * kernel bug (see docs/devplan.md's M6 as-built notes). Writing
+   * tightly-packed data and letting the framework's own repad run
+   * untouched is the only combination that round-trips correctly. */
+  private writeVec3Buffer(node: any, tight: Float32Array): void {
+    const attribute = node.value as THREE.BufferAttribute & { array: Float32Array };
+    attribute.array.set(tight);
+    attribute.needsUpdate = true;
+  }
+
   /** Async CPU readback, for manual/test verification only (see
    * window.__debug and .claude/skills/run-particles-simulator/SKILL.md) --
    * never call this from the render loop, it stalls waiting on the GPU. */
   async debugReadPositions(): Promise<Float32Array> {
-    const attribute = this.positions.value as THREE.BufferAttribute;
-    const buffer = await this.renderer.getArrayBufferAsync(attribute);
-    return new Float32Array(buffer);
+    return this.readVec3Buffer(this.positions);
+  }
+
+  /** Overwrites the position buffer with CPU-supplied data (e.g. from
+   * `fillUniformBall`), for manual/test verification only -- lets a debug
+   * script seed identical initial conditions on both backends despite them
+   * using different RNGs internally (CPU: `Math.random()`-based Box-Muller;
+   * GPU: `hash(instanceIndex)`-based), which otherwise makes a direct
+   * per-particle comparison meaningless. See `src/debug/verifyGpuGravity.ts`. */
+  debugSetPositions(positions: Float32Array): void {
+    this.writeVec3Buffer(this.positions, positions);
+  }
+
+  /** Runs the grid build + gravity + momentum correction (everything
+   * `step()` does except the final position/velocity integrate) and reads
+   * back the resulting accelerations. Isolating this from `step()` lets a
+   * debug script diff GPU-computed forces directly against
+   * `computeGridGravity`'s CPU output for the same positions, without the
+   * integrate step moving particles in between -- for manual/test
+   * verification only, same caveats as `debugReadPositions()`. */
+  async debugComputeAccelerations(): Promise<Float32Array> {
+    this.grid.build(this.renderer);
+    this.renderer.compute(this.gravityKernel);
+    this.renderer.compute(this.momentumReduceKernel);
+    this.renderer.compute(this.momentumApplyKernel);
+    return this.readVec3Buffer(this.accelerations);
+  }
+
+  /** Same as `debugComputeAccelerations()` but *without* the momentum
+   * correction kernels -- isolates `gravityKernel` (near+far-field sum)
+   * from `momentumReduceKernel`/`momentumApplyKernel`, for bisecting a
+   * `verifyGpuGravity` mismatch down to one stage or the other. */
+  async debugComputeAccelerationsRaw(): Promise<Float32Array> {
+    this.grid.build(this.renderer);
+    this.renderer.compute(this.gravityKernel);
+    return this.readVec3Buffer(this.accelerations);
+  }
+
+  /** Same as `debugComputeAccelerationsRaw()` but builds a one-off gravity
+   * kernel with only the near-field or only the far-field term included --
+   * bisects a mismatch down to one of those two sums specifically. Builds a
+   * fresh kernel per call; fine for manual/test use, not for the render loop. */
+  async debugComputeAccelerationsWithMode(mode: GravityDebugMode): Promise<Float32Array> {
+    this.grid.build(this.renderer);
+    const kernel = createGravityKernel(
+      this.positions,
+      this.accelerations,
+      this.grid,
+      this.count,
+      this.gravityG,
+      this.softening,
+      mode,
+    );
+    this.renderer.compute(kernel);
+    return this.readVec3Buffer(this.accelerations);
   }
 
   dispose(): void {
