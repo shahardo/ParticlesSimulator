@@ -38,7 +38,16 @@ const input = scriptArg && existsSync(scriptArg)
   ? createReadStream(scriptArg)
   : process.stdin;
 
+// HEADED=1 gets a *real* WebGPU adapter on this host -- confirmed by running
+// this file with headless:false and checking the app's own boot-status line:
+// headless Chromium reports `renderer: WebGL2 (fallback)` (adapter
+// negotiation fails, see SKILL.md's gotcha), but the exact same page in a
+// headed window reports `renderer: WebGPU`. Use HEADED=1 whenever a check
+// actually needs to exercise GPU compute (GpuBackend), not just the
+// WebGL2-fallback render path -- a visible window will pop up on screen.
+const headed = process.env.HEADED === '1';
 const browser = await chromium.launch({
+  headless: !headed,
   args: ['--no-sandbox', '--enable-unsafe-webgpu', '--enable-features=Vulkan'],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });

@@ -27,10 +27,12 @@
       "Bash(echo *)",
       "Read(//tmp/**)",
       "Bash(./node_modules/.bin/vitest.cmd run *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(HEADED=1 node .claude/skills/run-particles-simulator/driver.mjs)"
     ],
     "additionalDirectories": [
-      "c:\\GoogleDrive\\dev\\ParticlesSimulator\\.claude\\skills\\run-particles-simulator\\screenshots"
+      "c:\\GoogleDrive\\dev\\ParticlesSimulator\\.claude\\skills\\run-particles-simulator\\screenshots",
+      "c:\\GoogleDrive\\dev\\ParticlesSimulator\\.claude\\skills\\run-particles-simulator"
     ]
   }
 }

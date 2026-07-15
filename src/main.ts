@@ -69,9 +69,7 @@ createPanel(
   (partial) => {
     Object.assign(params, partial);
     // Forwards to whichever backend is currently active (App keeps that
-    // reference, not main.ts). GpuBackend.setParams() only understands
-    // domainRadius so far -- no gravity exists on the GPU path until M6 --
-    // and harmlessly ignores the rest.
+    // reference, not main.ts).
     app.setParams(partial);
     if (partial.domainRadius !== undefined) setDomainRadius(partial.domainRadius);
   },
