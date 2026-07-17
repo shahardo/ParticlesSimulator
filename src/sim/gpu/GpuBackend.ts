@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
-import { Fn, If, Loop, cos, dot, hash, instanceIndex, instancedArray, log, max, pow, sqrt, uniform, vec3 } from 'three/tsl';
+import { Fn, If, Loop, cos, dot, float, hash, instanceIndex, instancedArray, int, log, max, pow, sqrt, uniform, vec3 } from 'three/tsl';
 import type { SimulationBackend, ParticleSnapshot } from '../SimulationBackend.ts';
-import type { SimParams } from '../../app/Config.ts';
+import type { SimParams, WallBehavior } from '../../app/Config.ts';
+import { WALL_VANISH_DISTANCE } from '../../app/Config.ts';
 import { computeGridSizing } from '../cpu/grid/UniformGrid.ts';
 import { GpuUniformGrid } from './grid/GpuUniformGrid.ts';
 import { createGravityKernel } from './physics/gpuGravity.ts';
@@ -14,6 +15,12 @@ export interface GravityDebugMode {
   includeNear?: boolean;
   includeFar?: boolean;
 }
+
+/** Maps a WallBehavior to the int code `integrateKernel` branches on --
+ * kept as a plain number (not a string) so the wall-behavior check is a
+ * uniform comparison inside the compiled kernel, letting the Tweakpane
+ * dropdown change behavior live without rebuilding any kernel. */
+const WALL_BEHAVIOR_CODE: Record<WallBehavior, number> = { bounce: 0, vanish: 1, wraparound: 2 };
 
 /**
  * M6: real softened-Newtonian gravity on the GPU, via `GpuUniformGrid` (a
@@ -50,6 +57,7 @@ export class GpuBackend implements SimulationBackend {
   private dt = uniform(0);
   private gravityG = uniform(0);
   private softening = uniform(0.01);
+  private wallBehaviorMode = uniform(0, 'int');
 
   // Rebuilt every init() since instancedArray buffers are fixed-size --
   // `!` is safe because init() always runs before step()/getPositionsNode().
@@ -62,6 +70,10 @@ export class GpuBackend implements SimulationBackend {
   private positions!: any;
   private velocities!: any;
   private accelerations!: any;
+  // Doubles as the "vanish" mode's alive flag, exactly like CpuBackend's
+  // masses array -- see GpuUniformGrid's doc comment for why this needs no
+  // separate alive buffer.
+  private masses!: any;
   private netMomentumBias!: any;
   private grid!: GpuUniformGrid;
   private initKernel!: any;
@@ -79,10 +91,12 @@ export class GpuBackend implements SimulationBackend {
     this.domainRadius.value = params.domainRadius;
     this.gravityG.value = params.gravityG;
     this.softening.value = params.softening;
+    this.wallBehaviorMode.value = WALL_BEHAVIOR_CODE[params.wallBehavior];
 
     this.positions = instancedArray(count, 'vec3');
     this.velocities = instancedArray(count, 'vec3');
     this.accelerations = instancedArray(count, 'vec3');
+    this.masses = instancedArray(count, 'float');
     this.netMomentumBias = instancedArray(1, 'vec3');
 
     // Box-Muller via hash(): matches fillUniformBall's CPU distribution
@@ -111,18 +125,21 @@ export class GpuBackend implements SimulationBackend {
       const dir: any = vec3(dx, dy, dz);
       const dirLength: any = max(sqrt(dot(dir, dir)), 1e-6);
       const rFrac: any = pow(hash(instanceIndex.add(40000063)), 1 / 3);
-      const ballRadius: any = this.domainRadius.mul(0.6);
+      // Matches Config.ts's INITIAL_CLOUD_RADIUS_FRACTION -- see fillUniformBall's use in CpuBackend.
+      const ballRadius: any = this.domainRadius.mul(0.15);
       position.assign(dir.mul(ballRadius.mul(rFrac).div(dirLength)));
 
       // Start from rest, like CpuBackend -- gravity pulling an initially
       // static cloud into a clump is the simplest visual/numerical
       // correctness check, and it's what the CPU reference does too.
       velocity.assign(vec3(0, 0, 0));
+      this.masses.element(instanceIndex).assign(float(1));
     })().compute(count);
 
-    this.grid = new GpuUniformGrid(count, computeGridSizing(count), this.positions, this.domainRadius);
+    this.grid = new GpuUniformGrid(count, computeGridSizing(count), this.positions, this.masses, this.domainRadius);
     this.gravityKernel = createGravityKernel(
       this.positions,
+      this.masses,
       this.accelerations,
       this.grid,
       count,
@@ -130,18 +147,23 @@ export class GpuBackend implements SimulationBackend {
       this.softening,
     );
 
-    // Single-invocation net-momentum reduction (mass = 1 per particle, see
-    // GpuUniformGrid's doc comment), mirroring computeGridGravity's CPU-side
-    // correction: measure the mass-weighted acceleration bias directly and
-    // subtract it equally per particle so net momentum change is exactly
-    // zero every step, without touching how any individual particle's
-    // far-field force varies with its own position.
+    // Single-invocation net-momentum reduction, mirroring
+    // computeGridGravity's CPU-side correction: measure the mass-weighted
+    // acceleration bias directly and subtract it equally per particle so
+    // net momentum change is exactly zero every step, without touching how
+    // any individual particle's far-field force varies with its own
+    // position. Mass-weighted (not divided by raw count) so a vanished
+    // (mass-0) particle's stale acceleration doesn't skew the correction --
+    // matches the CPU version's `totalMass`-divided form exactly.
     this.momentumReduceKernel = Fn(() => {
-      const sum = vec3(0, 0, 0).toVar();
+      const sumMA = vec3(0, 0, 0).toVar();
+      const sumM: any = float(0).toVar();
       Loop({ start: 0, end: count }, ({ i }: any) => {
-        sum.addAssign(this.accelerations.element(i));
+        const m: any = this.masses.element(i);
+        sumMA.addAssign(this.accelerations.element(i).mul(m));
+        sumM.addAssign(m);
       });
-      this.netMomentumBias.element(0).assign(sum.div(count));
+      this.netMomentumBias.element(0).assign(sumMA.div(max(sumM, 1e-6)));
     })().compute(1);
 
     this.momentumApplyKernel = Fn(() => {
@@ -151,42 +173,88 @@ export class GpuBackend implements SimulationBackend {
     this.integrateKernel = Fn(() => {
       const position = this.positions.element(instanceIndex);
       const velocity = this.velocities.element(instanceIndex);
+      const mass = this.masses.element(instanceIndex);
       const accel = this.accelerations.element(instanceIndex);
-
-      // Semi-implicit (symplectic) Euler, same as CpuBackend -- conserves
-      // energy far better than explicit Euler over long-running orbital dynamics.
-      velocity.addAssign(accel.mul(this.dt));
-      position.addAssign(velocity.mul(this.dt));
-
-      // Fold-back bounce off a cube domain wall (not a plain clamp+negate --
-      // matches CpuBackend so a large single-step overshoot still lands at
-      // a physically sane spot, now that this is real physics rather than
-      // M5's drift skeleton).
       const r = this.domainRadius;
+      const mode = this.wallBehaviorMode;
 
-      If(position.x.greaterThan(r), () => {
-        position.x = r.sub(position.x.sub(r));
-        velocity.x = velocity.x.negate();
-      });
-      If(position.x.lessThan(r.negate()), () => {
-        position.x = r.negate().sub(position.x.add(r));
-        velocity.x = velocity.x.negate();
-      });
-      If(position.y.greaterThan(r), () => {
-        position.y = r.sub(position.y.sub(r));
-        velocity.y = velocity.y.negate();
-      });
-      If(position.y.lessThan(r.negate()), () => {
-        position.y = r.negate().sub(position.y.add(r));
-        velocity.y = velocity.y.negate();
-      });
-      If(position.z.greaterThan(r), () => {
-        position.z = r.sub(position.z.sub(r));
-        velocity.z = velocity.z.negate();
-      });
-      If(position.z.lessThan(r.negate()), () => {
-        position.z = r.negate().sub(position.z.add(r));
-        velocity.z = velocity.z.negate();
+      // Permanently vanished (mass zeroed on some earlier step) -- skip
+      // regardless of the *current* mode, so switching modes mid-session
+      // doesn't resurrect or otherwise perturb a dead particle. Matches
+      // CpuBackend's unconditional `masses[i] === 0` skip exactly.
+      If(mass.greaterThan(float(0)), () => {
+        // Semi-implicit (symplectic) Euler, same as CpuBackend -- conserves
+        // energy far better than explicit Euler over long-running orbital dynamics.
+        velocity.addAssign(accel.mul(this.dt));
+        position.addAssign(velocity.mul(this.dt));
+
+        If(mode.equal(int(0)), () => {
+          // bounce: fold-back (not a plain clamp+negate) so a large
+          // single-step overshoot still lands at a physically sane spot.
+          If(position.x.greaterThan(r), () => {
+            position.x = r.sub(position.x.sub(r));
+            velocity.x = velocity.x.negate();
+          });
+          If(position.x.lessThan(r.negate()), () => {
+            position.x = r.negate().sub(position.x.add(r));
+            velocity.x = velocity.x.negate();
+          });
+          If(position.y.greaterThan(r), () => {
+            position.y = r.sub(position.y.sub(r));
+            velocity.y = velocity.y.negate();
+          });
+          If(position.y.lessThan(r.negate()), () => {
+            position.y = r.negate().sub(position.y.add(r));
+            velocity.y = velocity.y.negate();
+          });
+          If(position.z.greaterThan(r), () => {
+            position.z = r.sub(position.z.sub(r));
+            velocity.z = velocity.z.negate();
+          });
+          If(position.z.lessThan(r.negate()), () => {
+            position.z = r.negate().sub(position.z.add(r));
+            velocity.z = velocity.z.negate();
+          });
+        }).ElseIf(mode.equal(int(2)), () => {
+          // wraparound: reappear on the opposite face, velocity unchanged.
+          If(position.x.greaterThan(r), () => {
+            position.x = position.x.sub(r.mul(2));
+          });
+          If(position.x.lessThan(r.negate()), () => {
+            position.x = position.x.add(r.mul(2));
+          });
+          If(position.y.greaterThan(r), () => {
+            position.y = position.y.sub(r.mul(2));
+          });
+          If(position.y.lessThan(r.negate()), () => {
+            position.y = position.y.add(r.mul(2));
+          });
+          If(position.z.greaterThan(r), () => {
+            position.z = position.z.sub(r.mul(2));
+          });
+          If(position.z.lessThan(r.negate()), () => {
+            position.z = position.z.add(r.mul(2));
+          });
+        }).ElseIf(mode.equal(int(1)), () => {
+          // vanish: any axis past the wall kills the whole particle --
+          // zero its mass (excludes it from the grid/gravity math, see
+          // GpuUniformGrid/gpuGravity's doc comments), zero velocity, and
+          // park it beyond the camera's far plane (see Config.ts's
+          // WALL_VANISH_DISTANCE doc comment) so it's effectively hidden.
+          const outOfBounds: any = position.x
+            .greaterThan(r)
+            .or(position.x.lessThan(r.negate()))
+            .or(position.y.greaterThan(r))
+            .or(position.y.lessThan(r.negate()))
+            .or(position.z.greaterThan(r))
+            .or(position.z.lessThan(r.negate()));
+
+          If(outOfBounds, () => {
+            mass.assign(float(0));
+            velocity.assign(vec3(0, 0, 0));
+            position.assign(vec3(WALL_VANISH_DISTANCE, WALL_VANISH_DISTANCE, WALL_VANISH_DISTANCE));
+          });
+        });
       });
     })().compute(count);
 
@@ -197,6 +265,7 @@ export class GpuBackend implements SimulationBackend {
     if (params.domainRadius !== undefined) this.domainRadius.value = params.domainRadius;
     if (params.gravityG !== undefined) this.gravityG.value = params.gravityG;
     if (params.softening !== undefined) this.softening.value = params.softening;
+    if (params.wallBehavior !== undefined) this.wallBehaviorMode.value = WALL_BEHAVIOR_CODE[params.wallBehavior];
   }
 
   step(dt: number): void {
@@ -315,6 +384,7 @@ export class GpuBackend implements SimulationBackend {
     this.grid.build(this.renderer);
     const kernel = createGravityKernel(
       this.positions,
+      this.masses,
       this.accelerations,
       this.grid,
       this.count,

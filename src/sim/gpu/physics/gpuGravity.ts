@@ -15,13 +15,17 @@ import type { GpuUniformGrid } from '../grid/GpuUniformGrid.ts';
  * same reason as the CPU version -- GpuBackend applies the same global
  * net-momentum correction afterward (see its momentum reduce/apply kernels).
  *
- * Particle mass hardcoded to 1 (see GpuUniformGrid's doc comment).
+ * Reads real per-particle mass for the near-field source term (see
+ * GpuUniformGrid's doc comment) -- a vanished ("vanish" wall behavior,
+ * mass 0) particle contributes nothing as a source, exactly like the CPU
+ * version's `masses[j]` weighting already does.
  *
  * All locals holding TSL node values are explicitly typed `any` -- see the
  * typing-gotcha note at the top of GpuUniformGrid.ts.
  */
 export function createGravityKernel(
   positions: any,
+  masses: any,
   accelerations: any,
   grid: GpuUniformGrid,
   count: number,
@@ -73,7 +77,7 @@ export function createGravityKernel(
                   const d: any = positions.element(j).sub(pos);
                   const distSq: any = dot(d, d).add(eps2);
                   const invDist3: any = distSq.mul(sqrt(distSq)).reciprocal();
-                  const g: any = G.mul(invDist3); // mass_j = 1
+                  const g: any = G.mul(masses.element(j)).mul(invDist3);
                   accel.addAssign(d.mul(g));
                 });
               });

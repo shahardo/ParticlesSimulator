@@ -24,9 +24,13 @@ import type { GridSizing } from '../../cpu/grid/UniformGrid.ts';
  * dynamic TSL loop -- if `computeGridSizing` ever changes blockSize, this
  * needs to change too.
  *
- * Particle mass is hardcoded to 1 throughout (matching `CpuBackend`, which
- * fills its masses array with 1 and has no per-particle-mass UI yet) --
- * cell mass is just its member count, avoiding a redundant mass buffer.
+ * Particle mass is a real per-particle buffer (as of the "vanish" wall
+ * behavior): `CpuBackend` reuses its existing `masses` array as a 0/1 alive
+ * flag for vanished particles (see its doc comment), and this class mirrors
+ * that exactly -- `fineAggregateKernel` sums real mass instead of assuming
+ * every member contributes 1, so a vanished (mass-0) particle correctly
+ * contributes nothing to its cell's mass or center-of-mass, no matter
+ * where its position actually is.
  *
  * All locals holding TSL node values are explicitly typed `any` throughout
  * this file, not just the buffer handles -- see the TSL typing gotcha in
@@ -64,7 +68,7 @@ export class GpuUniformGrid {
   private fineAggregateKernel: any;
   private coarseAggregateKernel: any;
 
-  constructor(count: number, sizing: GridSizing, positions: any, domainRadius: any) {
+  constructor(count: number, sizing: GridSizing, positions: any, masses: any, domainRadius: any) {
     this.fineCellsPerAxis = sizing.fineCellsPerAxis;
     this.coarseCellsPerAxis = sizing.coarseCellsPerAxis;
     this.blockSize = sizing.blockSize;
@@ -134,20 +138,22 @@ export class GpuUniformGrid {
       const start: any = this.fineCellStart.element(c);
       const end: any = this.fineCellStart.element(c.add(int(1)));
 
+      const m: any = float(0).toVar();
       const comX: any = float(0).toVar();
       const comY: any = float(0).toVar();
       const comZ: any = float(0).toVar();
       Loop({ start, end }, ({ i }: any) => {
-        const p: any = positions.element(this.sortedIndices.element(i));
-        comX.addAssign(p.x);
-        comY.addAssign(p.y);
-        comZ.addAssign(p.z);
+        const idx: any = this.sortedIndices.element(i);
+        const p: any = positions.element(idx);
+        const pm: any = masses.element(idx);
+        m.addAssign(pm);
+        comX.addAssign(pm.mul(p.x));
+        comY.addAssign(pm.mul(p.y));
+        comZ.addAssign(pm.mul(p.z));
       });
 
-      const cellCount: any = end.sub(start);
-      const m: any = float(cellCount);
       this.fineCellMass.element(c).assign(m);
-      If(cellCount.greaterThan(int(0)), () => {
+      If(m.greaterThan(float(0)), () => {
         this.fineCellCom.element(c).assign(vec3(comX, comY, comZ).div(m));
       });
     })().compute(fineCellCount);
